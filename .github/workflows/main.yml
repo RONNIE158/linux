@@ -26,7 +26,6 @@ jobs:
         cp -r legacy-kernel/sound/soc/qcom gki-kernel/sound/soc/
         cp -r legacy-kernel/drivers/staging/qcacld-3.0 gki-kernel/drivers/staging/
         cp -r legacy-kernel/drivers/input/touchscreen gki-kernel/drivers/input/
-        cp -r legacy-kernel/drivers/char/generic-adc gki-kernel/drivers/char/
 
     - name: Combine Image.gz + DTB
       run: |
