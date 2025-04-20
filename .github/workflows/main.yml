@@ -1,0 +1,42 @@
+name: Port Driver from 4.9 to 5.10 and Generate Image.gz-dtb
+
+on:
+  workflow_dispatch:
+
+jobs:
+  port-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout GKI Kernel 5.10 (target)
+      uses: actions/checkout@v4
+      with:
+        repository: RONNIE158/linux
+        path: gki-kernel
+
+    - name: Checkout Kernel 4.9 (source of driver)
+      uses: actions/checkout@v4
+      with:
+        repository: RONNIE158/android_kernel_xiaomi_sdm845
+        path: legacy-kernel
+
+    - name: Copy DTS and drivers from 4.9 to 5.10
+      run: |
+        cp -r legacy-kernel/arch/arm64/boot/dts/qcom/* gki-kernel/arch/arm64/boot/dts/qcom/
+        cp -r legacy-kernel/sound/soc/qcom gki-kernel/sound/soc/
+        cp -r legacy-kernel/drivers/staging/qcacld-3.0 gki-kernel/drivers/staging/
+        cp -r legacy-kernel/drivers/input/touchscreen gki-kernel/drivers/input/
+        cp -r legacy-kernel/drivers/char/generic-adc gki-kernel/drivers/char/
+
+    - name: Combine Image.gz + DTB
+      run: |
+        mkdir -p out
+        gunzip -c gki-kernel/Image.gz > out/Image
+        cat out/Image gki-kernel/sdm845-xiaomi-beryllium.dtb > out/Image-dtb
+        gzip -c out/Image-dtb > out/Image.gz-dtb
+
+    - name: Upload Combined Image.gz-dtb
+      uses: actions/upload-artifact@v4
+      with:
+        name: image-gz-dtb
+        path: out/Image.gz-dtb
