@@ -1,41 +1,104 @@
-name: Port Driver from 4.9 to 5.10 and Generate Image.gz-dtb
+name: Build GKI Kernel with Lindroid DRM, (berhasil)
 
 on:
   workflow_dispatch:
 
 jobs:
-  port-and-build:
+  build-gki:
     runs-on: ubuntu-latest
+    env:
+      DEVICE: pantah
+      KERNEL_REPO: RONNIE158/linux
+      KERNEL_BRANCH: beryllium-android-5.10
+      PATCH_REPO: Linux-on-droid/lindroid-drm-loopback
+      CLANG_VERSION: r416183b
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
 
     steps:
-    - name: Checkout GKI Kernel 5.10 (target)
-      uses: actions/checkout@v4
+    - name: Checkout Kernel
+      uses: actions/checkout@v3
       with:
-        repository: RONNIE158/linux
-        path: gki-kernel
+        repository: ${{ env.KERNEL_REPO }}
+        ref: ${{ env.KERNEL_BRANCH }}
+        path: kernel
 
-    - name: Checkout Kernel 4.9 (source of driver)
-      uses: actions/checkout@v4
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          bc bison build-essential flex lld \
+          libssl-dev libncurses5-dev libncursesw5-dev \
+          python3 python3-pip rsync ccache zip \
+          gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+          binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi \
+          git curl wget unzip \
+          libelf-dev dwarves \
+          coreutils device-tree-compiler \
+          clang llvm
+
+    - name: Set up LineageOS Clang
+      run: |
+        git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-${{ env.CLANG_VERSION }} clang
+        echo "${{ github.workspace }}/clang/bin" >> $GITHUB_PATH
+
+    - name: Checkout Lindroid DRM Loopback
+      uses: actions/checkout@v3
       with:
-        repository: RONNIE158/android_kernel_xiaomi_sdm845
-        path: legacy-kernel
+        repository: ${{ env.PATCH_REPO }}
+        path: drm-dkms
 
-    - name: Copy DTS and drivers from 4.9 to 5.10
+    - name: Patch Kernel for Lindroid DRM
       run: |
-        cp -r legacy-kernel/arch/arm64/boot/dts/qcom/* gki-kernel/arch/arm64/boot/dts/qcom/
-        cp -r legacy-kernel/sound/soc/qcom gki-kernel/sound/soc/
-        cp -r legacy-kernel/drivers/staging/qcacld-3.0 gki-kernel/drivers/staging/
-        cp -r legacy-kernel/drivers/input/touchscreen gki-kernel/drivers/input/
+        cd kernel
+        # Tambah ke drivers/Makefile
+        echo 'obj-y += lindroid-drm/' >> drivers/Makefile
+        # Tambah ke drivers/Kconfig
+        echo 'source "drivers/lindroid-drm/Kconfig"' >> drivers/Kconfig
+        # Copy source lindroid-drm ke tree kernel
+        cp -r ../drm-dkms drivers/lindroid-drm
 
-    - name: Combine Image.gz + DTB
+    - name: Build Kernel GKI
+      env:
+        PATH: ${{ github.workspace }}/clang/bin:/usr/bin:$PATH
+        CC: clang
+        CXX: clang++
+        LD: ld.lld
+        CROSS_COMPILE: aarch64-linux-gnu-
+        CROSS_COMPILE_ARM32: arm-linux-gnueabi-
+        ARCH: arm64
+        CCACHE_DIR: ${{ env.CCACHE_DIR }}
       run: |
-        mkdir -p out
-        gunzip -c gki-kernel/Image.gz > out/Image
-        cat out/Image gki-kernel/sdm845-xiaomi-beryllium.dtb > out/Image-dtb
-        gzip -c out/Image-dtb > out/Image.gz-dtb
+        cd kernel
+        make ARCH=arm64 O=out beryllium_defconfig
+        yes "" | make ARCH=arm64 O=out olddefconfig
+        make -j$(nproc) ARCH=arm64 O=out \
+          CC=clang \
+          CXX=clang++ \
+          CROSS_COMPILE=aarch64-linux-gnu- \
+          CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+          LD=ld.lld \
+          Image.lz4 dtbs modules | tee build.log
 
-    - name: Upload Combined Image.gz-dtb
+    - name: Verify Lindroid DRM Build
+      run: |
+        cd kernel
+        if grep -q "AR      drivers/lindroid-drm/built-in.a" build.log; then
+          echo "✅ Lindroid DRM built successfully"
+        else
+          echo "❌ Lindroid DRM NOT built"
+          exit 1
+        fi    
+
+    - name: Collect Build Outputs
+      run: |
+        mkdir -p artifacts
+        cp kernel/out/arch/arm64/boot/Image.lz4 artifacts/
+        cp kernel/out/arch/arm64/boot/dts/google/*.dtb artifacts/ || true
+        cp kernel/out/arch/arm64/boot/dts/google/*.dtbo artifacts/ || true
+        find kernel/out -name "*.ko" -exec cp {} artifacts/ \;
+
+    - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: image-gz-dtb
-        path: out/Image.gz-dtb
+        name: gki-lindroid-build
+        path: artifacts
